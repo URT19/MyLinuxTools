@@ -24,8 +24,13 @@
 
 حداقل چیزی که لازمه:
 
+```
+curl -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/KCP_Tunnel_Benchmark/kcptun-rs-optimizer.sh?$RANDOM" -o kcptun-rs-optimizer.sh && chmod +x kcptun-rs-optimizer.sh
+sudo ./kcptun-rs-optimizer.sh
+```
+
 ```bash
-sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./v3.sh
+sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./kcptun-rs-optimizer.sh
 ```
 
 بقیه‌ی متغیرها اختیاری‌ان.
@@ -69,7 +74,7 @@ sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./v3.sh
 ```bash
 sudo MODE=fast3 \
   IRAN_IP=<iran-ip> IRAN_PASS=<password> \
-  ./v3.sh
+  ./kcptun-rs-optimizer.sh
 ```
 
 mode و mtu رو قفل کن، بقیه sweep:
@@ -77,7 +82,7 @@ mode و mtu رو قفل کن، بقیه sweep:
 ```bash
 sudo MODE=fast3 MTU=1400 \
   IRAN_IP=<iran-ip> IRAN_PASS=<password> \
-  ./v3.sh
+  ./kcptun-rs-optimizer.sh
 ```
 
 همه چیز رو دستی بده (بدون هیچ sweep، فقط یه تست):
@@ -85,7 +90,7 @@ sudo MODE=fast3 MTU=1400 \
 ```bash
 sudo MODE=fast3 MTU=1400 WIN=2048/2048 SOCKBUF=8388608 NOCOMP=on SMUXVER=2 \
   IRAN_IP=<iran-ip> IRAN_PASS=<password> \
-  ./v3.sh
+  ./kcptun-rs-optimizer.sh
 ```
 
 با debug و فقط تست mode:
@@ -93,7 +98,7 @@ sudo MODE=fast3 MTU=1400 WIN=2048/2048 SOCKBUF=8388608 NOCOMP=on SMUXVER=2 \
 ```bash
 sudo DEBUG=1 MODE=fast3 \
   IRAN_IP=<iran-ip> IRAN_PASS=<password> \
-  ./v3.sh
+  ./kcptun-rs-optimizer.sh
 ```
 
 ## خروجی نهایی
