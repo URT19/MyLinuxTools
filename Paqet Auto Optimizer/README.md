@@ -38,13 +38,16 @@
 ### روش سریع
 
 ```bash
-# دانلود اسکریپت
+
 curl -fsSL -o paqet-optimizer.sh \
   "https://raw.githubusercontent.com/URT19/MyLinuxTools/main/Paqet%20Auto%20Optimizer/paqet-optimizer.sh"
+```
 
+```
 chmod +x paqet-optimizer.sh
+```
 
-# اجرا (اجباری: IP و پسورد سرور ایران)
+```
 sudo IRAN_IP=<آی‌پی-ایران> IRAN_PASS=<پسورد> ./paqet-optimizer.sh
 ```
 
