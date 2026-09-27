@@ -63,13 +63,13 @@
 ### روش سریع
 
 ```bash
-# دانلود اسکریپت
+
 curl -fsSL -o paqet-optimizer.sh \
   "https://raw.githubusercontent.com/URT19/MyLinuxTools/main/Paqet%20Auto%20Optimizer/a21/paqet-optimizer.sh"
 
 chmod +x paqet-optimizer.sh
 
-# اجرا
+
 sudo IRAN_IP=<آی‌پی-سرور-دوم> IRAN_PASS=<پسورد> ./paqet-optimizer.sh
 ```
 
