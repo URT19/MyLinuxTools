@@ -23,11 +23,18 @@
 ## اجرا
 
 حداقل چیزی که لازمه:
+### VERSION 4.1
+```
+curl -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/KCP_Tunnel_Benchmark/kcptun-rs-optimizer-v4.1.sh?$RANDOM" -o kcptun-rs-optimizer.sh && chmod +x kcptun-rs-optimizer.sh
+sudo ./kcptun-rs-optimizer.sh
+```
 
+### VERSION 3.1
 ```
 curl -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/KCP_Tunnel_Benchmark/kcptun-rs-optimizer.sh?$RANDOM" -o kcptun-rs-optimizer.sh && chmod +x kcptun-rs-optimizer.sh
 sudo ./kcptun-rs-optimizer.sh
 ```
+
 
 ```bash
 sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./kcptun-rs-optimizer.sh
