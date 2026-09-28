@@ -24,7 +24,7 @@
 اگر روی سرور ایران محدودیت روی پورت ۲۲ برای اتصال SSH وجود دارد، ابتدا با روش دیگری (مثل کنسول ابری یا پورت جایگزین) وارد سرور ایران شوید و سپس اسکریپت زیر را اجرا کنید تا پورت SSH تغییر کند:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-tester/main/change_ssh_port.sh)
+bash <(https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/change_ssh_port.sh)
 ```
 
 ---
