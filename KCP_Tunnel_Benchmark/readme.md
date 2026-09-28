@@ -46,9 +46,9 @@ sudo ./kcptun-rs-optimizer.sh
 
 
 ```bash
-sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./kcptun-rs-optimizer.sh
+#Example: sudo IRAN_IP=<iran-ip> IRAN_PASS=<password> ./kcptun-rs-optimizer.sh
+IRAN_IP=1.2.3.4 IRAN_USER=root IRAN_PASS='tfDc+t41&Vm3I' IRAN_PORT=22 ./kcptun-rs-optimizer.sh
 ```
-
 بقیه‌ی متغیرها اختیاری‌ان.
 
 ### متغیرهای محیطی
