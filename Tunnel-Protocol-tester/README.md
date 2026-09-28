@@ -7,7 +7,7 @@
 اگر روی سرور ایران محدودیت روی پورت ۲۲ برای اتصال SSH وجود دارد، ابتدا با روش دیگری (مثل کنسول ابری یا پورت جایگزین) وارد سرور ایران شوید و سپس اسکریپت زیر را اجرا کنید تا پورت SSH تغییر کند:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-tester/main/change_ssh_port.sh)
+bash <(https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/change_ssh_port.sh)
 ```
 
 ---
@@ -55,14 +55,14 @@ apt install -y curl wget tar netcat-openbsd sshpass openssl
 
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-tester/main/frp_test.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Tunnel-Protocol-tester/frp_test.sh)
 ```
 
 ### روش سریع
 
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-tester/main/frp_test.sh) \
+bash <(curl -sSL https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Tunnel-Protocol-tester/frp_test.sh) \
   --iran-host IP_OR_DOMAIN \
   --iran-port 22 \
   --iran-user root \
@@ -72,7 +72,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-te
 ### روش دستی
 
 ```bash
-wget -O frp_test.sh https://raw.githubusercontent.com/ExtremeDot/Tunnel-Protocol-tester/main/frp_test.sh
+wget -O frp_test.sh https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Tunnel-Protocol-tester/frp_test.sh
 chmod +x frp_test.sh
 
 ./frp_test.sh \
