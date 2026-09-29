@@ -38,6 +38,16 @@ chmod +x gre_extreme.sh
 bash /root/gre_extreme.sh run
 ```
 
+
+------
+
+### غیرفعل کردن سرویس
+
+```
+bash /root/gre_extreme.sh stop
+```
+
+
 --------
 
 
