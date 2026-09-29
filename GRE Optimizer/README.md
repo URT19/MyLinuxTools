@@ -59,7 +59,12 @@ curl -fsSL -o gre-optimizer.sh \
 
 chmod +x gre-optimizer.sh
 
-sudo IRAN_IP=<آی‌پی-سرور-دوم> IRAN_PASS=<پسورد> ./gre-optimizer.sh
+````
+
+
+```
+
+sudo IRAN_IP=1.2.3.4 IRAN_PASS='ABCDEF123456' IRAN_PORT=22 ./gre-optimizer.sh
 ```
 
 ### روش کلون کردن مخزن
