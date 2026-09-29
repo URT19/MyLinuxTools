@@ -7,6 +7,40 @@ chmod +x gre_extreme.sh
 
 nano gre_extreme.sh
 ```
+
+ابتدا از سرور ایران، 
+مقادیر اولیه رو برای آی پی سرور ایران و خارج و پورت هایی که قراره فوروارد بشه رو ویرایش و بروزرسانی کنید.
+
+بعد اسکریپت رو اجرا کنید
+
+```bash
+bash /root/gre_extreme.sh run
+```
+
+بعد همین فایل رو به سرور خارج با دستور زیر انتقال بدید
+
+```
+apt install sshpass -y
+sleep 1
+cp gre_extreme.sh gre_extreme_kharej.sh && \
+sed -i 's/^RUN_SCRIPT="IRAN"/#RUN_SCRIPT="IRAN"/; s/^#RUN_SCRIPT="KHAREJ"/RUN_SCRIPT="KHAREJ"/' gre_extreme_kharej.sh && \
+read -p "KHAREJ host (IP or hostname): " HOST && \
+read -p "User (default: root): " USER && USER=${USER:-root} && \
+read -sp "Password: " PASS && echo && \
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no gre_extreme_kharej.sh ${USER}@${HOST}:~/gre_extreme.sh
+
+```
+
+بعد وارد سرور خارج میشیم و دستور زیر رو وارد میکنیم
+
+```
+chmod +x gre_extreme.sh
+bash /root/gre_extreme.sh run
+```
+
+--------
+
+
 اسکریپت مدیریت تونل GRE بین دو سرور (ایران ↔ خارج) با این قابلیت‌ها:
 
 - ساخت و نگهداری خودکار تونل GRE
