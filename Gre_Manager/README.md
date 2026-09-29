@@ -1,5 +1,11 @@
 # GRE Extreme Manager (v3.0)
 
+```
+wget https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Gre_Manager/gre_extreme.sh
+chmod +x gre_extreme.sh
+
+nano gre_extreme.sh
+```
 اسکریپت مدیریت تونل GRE بین دو سرور (ایران ↔ خارج) با این قابلیت‌ها:
 
 - ساخت و نگهداری خودکار تونل GRE
