@@ -32,9 +32,9 @@ bash <(https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/chan
 ## اجرا
 
 حداقل چیزی که لازمه:
-### VERSION 4.1
+### VERSION 4.2
 ```
-curl -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/KCP_Tunnel_Benchmark/kcptun-rs-optimizer-v4.1.sh?$RANDOM" -o kcptun-rs-optimizer.sh && chmod +x kcptun-rs-optimizer.sh
+curl -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/KCP_Tunnel_Benchmark/kcptun-rs-optimizer-v4.2.sh?$RANDOM" -o kcptun-rs-optimizer.sh && chmod +x kcptun-rs-optimizer.sh
 sudo ./kcptun-rs-optimizer.sh
 ```
 
