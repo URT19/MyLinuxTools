@@ -1,5 +1,6 @@
 # GRE Extreme Manager (v3.0)
 
+### دستورات در سرور ایران
 ```
 curl -o gre_extreme.sh https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Gre_Manager/gre_extreme.sh
 
@@ -23,7 +24,7 @@ GRE_LOCAL_IP_KHAREJ="207.131.135.125"
 GRE_PORT_FORWARD="80,443,2053"
 ```
 
-اگر چندین تانل دارید و میخواید آی پی ها و نام رو تغییر بدید، مقادیر زیر رو هم تغییر بدید
+دلخواه: اگر چندین تانل دارید و میخواید آی پی ها و نام رو تغییر بدید، مقادیر زیر رو هم تغییر بدید
 ```
 GRE_NAME="gre1"
 GRE_TUN_IP_IRAN="172.31.255.1/30"
@@ -50,7 +51,9 @@ sshpass -p "$PASS" scp -o StrictHostKeyChecking=no gre_extreme_kharej.sh ${USER}
 ```
 
 بعد که با موفقیت انتقال داد
+----
 
+### دستورات در سرور خارج
 وارد سرور خارج میشیم و دستور زیر رو وارد میکنیم
 
 ```
