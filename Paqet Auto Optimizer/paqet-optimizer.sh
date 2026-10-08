@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
-# Paqet Auto Optimizer V2.1
-# Baseline + Greedy Multi-Stage Tuner for Paqet v2.2.0-optimized
+# Paqet Auto Optimizer V2.
+# Baseline + Greedy Multi-Stage Tuner for Paqet v2.5.0-optimized
 # Ubuntu 22/24
 # ============================================================
 
@@ -35,7 +35,8 @@ DEBUG="${DEBUG:-0}"
 
 PAQET_BIN="$BIN_DIR/paqet"
 PAQET_REMOTE_BIN="$REMOTE_BIN_DIR/paqet"
-PAQET_DOWNLOAD_URL="https://github.com/behzadea12/Paqet-Tunnel-Manager/releases/download/PaqetOptimized/paqet-linux-amd64-v2.2.0-optimize.tar.gz"
+#PAQET_DOWNLOAD_URL="https://github.com/behzadea12/Paqet-Tunnel-Manager/releases/download/PaqetOptimized/paqet-linux-amd64-v2.2.0-optimize.tar.gz"
+PAQET_DOWNLOAD_URL="https://github.com/behzadea12/Paqet-Tunnel-Manager/releases/download/v2.5.0/paqet-linux-amd64-v2.5.0.tar.gz"
 
 # ---- Overrides ----
 OVERRIDE_MODE="${MODE:-}"
