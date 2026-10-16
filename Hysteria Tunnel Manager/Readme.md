@@ -17,7 +17,7 @@
 برای اجرای اسکریپت مدیریت، ابتدا کد اسکریپت را در یک فایل (مثلاً `hysteria.sh`) ذخیره کرده، به آن دسترسی اجرایی بدهید و با کاربر `root` اجرا کنید:
 
 ```
-curl -Lo hysteria-manager.sh https://raw.githubusercontent.com/ExtremeDot/Hysteria-Manager/main/hysteria-manger.sh
+curl -Lo hysteria-manager.sh https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/Hysteria%20Tunnel%20Manager/hysteria-manger.sh
 chmod +x hysteria-manager.sh
 ```
 
