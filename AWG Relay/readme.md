@@ -745,4 +745,21 @@ ping -c3 10.8.0.1 && awg-relay status
 
 ---
 
+### تست با iperf3
+
+#### SERVER
+```
+iperf3 -s -p 52002
+```
+
+#### DIRECT MODE on CLIENT
+```
+iperf3 -c 127.0.0.1 -p 52002 -t 30
+
+```
+
+#### REVERSE MODE on CLIENT
+```
+iperf3 -c 127.0.0.1 -p 52002 -R -t 30
+```
 > این ابزار مبهم‌سازی انجام می‌دهد و تضمین دائمی در برابر شناسایی نیست؛ ولی بسیار مقاوم‌تر از GRE خام است. ترتیب پیشنهادی: اول AmneziaWG ساده، در صورت شناسایی rotate، و در صورت نیاز wrap با udp2raw.
