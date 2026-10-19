@@ -101,6 +101,9 @@ sudo ufw allow 443/udp
 
 از کامپیوتر خودتان (یا هر جایی که باینری را دارید):
 
+
+
+
 ```bash
 scp awg-relay root@203.0.113.10:/usr/local/bin/awg-relay
 scp awg-relay root@198.51.100.20:/usr/local/bin/awg-relay
@@ -117,11 +120,23 @@ awg-relay --version
 
 روی سروری که Rust دارد:
 
-```bash
-tar -xzf awg-relay-src.tar.gz
-cd awg-relay
+```
+mkdir -p ~/awg-src
+tar -xzf awg-relay-src.tar.gz -C ~/awg-src
+
+cd ~/awg-src/awg-relay
 cargo build --release
+
+```
+
+```
+chmod +x awg-relay
+sudo install -m0755 awg-relay /usr/local/bin/awg-relay
+```
+
+```
 sudo install -m0755 target/release/awg-relay /usr/local/bin/awg-relay
+awg-relay --help
 ```
 
 اگر سرور ایران به اینترنت آزاد دسترسی ندارد، باینری را روی خارج بسازید و به ایران کپی کنید:
