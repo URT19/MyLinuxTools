@@ -4,6 +4,13 @@
 
 اسکریپت روی سرور ایران، با دسترسی root اجرا می‌شود و از طریق SSH به سرور خارج وصل می‌شود. همه‌چیز، از ساخت گواهی و کانفیگ تا ساخت سرویس‌های systemd و تست تانل، از همین منو انجام می‌شود.
 
+
+
+<img width="517" height="463" alt="image" src="https://github.com/user-attachments/assets/76c32847-b61c-47dd-b30d-7d0a41cdf335" />
+
+
+----
+
 ## قابلیت‌ها
 
 - ساخت تانل **direct**: سرور Hysteria روی خارج، کلاینت روی ایران
@@ -25,14 +32,10 @@
 ## نصب سریع
 
 پکیج رسمی:
-```
-https://github.com/URT19/MyLinuxTools/releases/download/rbridge-v1.0/hysteria-tm.tar.gz
-```
-
 روی سرور ایران، با root:
 
 ```bash
-curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/releases/download/rbridge-v1.0/hysteria-tm.tar.gz"
+curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.2.tar.gz"
 tar -xzf hysteria-tm.tar.gz
 cd hysteria-tm
 sudo python3 ./hysteria-tm
