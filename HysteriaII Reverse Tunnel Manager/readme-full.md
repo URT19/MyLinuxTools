@@ -55,7 +55,7 @@
 پکیج رسمی در این آدرس است:
 
 ```
-https://github.com/URT19/MyLinuxTools/releases/download/rbridge-v1.0/hysteria-tm.tar.gz
+https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.2.tar.gz
 ```
 
 این پکیج شامل اسکریپت و سه فایل آفلاین است، پس دیگر لازم نیست Hysteria، rbridge یا installer را جداگانه دانلود کنی:
@@ -69,22 +69,14 @@ hysteria-tm/
     └── rbridge-linux-x86_64        (rbridge 0.1.0)
 ```
 
-checksum این فایل (SHA-256):
-```
-ae46809f5318e6fccdd709360a06214602968bc82b5e448cb3a748394755cfe8  hysteria-tm.tar.gz
-```
 
 ### آماده‌سازی روی سرور ایران
 
 ۱. پکیج را دانلود کن:
 ```bash
-curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/releases/download/rbridge-v1.0/hysteria-tm.tar.gz"
+curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.2.tar.gz"
 ```
 
-۲. (اختیاری) checksum را بررسی کن:
-```bash
-echo "ae46809f5318e6fccdd709360a06214602968bc82b5e448cb3a748394755cfe8  hysteria-tm.tar.gz" | sha256sum -c -
-```
 
 ۳. پکیج را باز کن و وارد پوشه شو:
 ```bash
@@ -93,12 +85,7 @@ cd hysteria-tm
 ```
 
 ۴. **وارد پوشه شو** (این مرحله را جا نینداز) و اسکریپت را با root اجرا کن:
-```bash
-cd hysteria-tm
-sudo python3 ./hysteria-tm
-```
 
-یا اگر فایل اجرایی است:
 ```bash
 cd hysteria-tm
 chmod +x hysteria-tm
