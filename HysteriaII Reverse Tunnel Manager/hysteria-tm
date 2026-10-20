@@ -32,9 +32,10 @@ except ImportError:
     paramiko = None
 
 # ---------------------------------------------------------------- constants
-VERSION = "0.8.13"
+VERSION = "0.9.1"
 BASE_DIR = "/etc/tunnel-manager"
 TUNNEL_DIR = os.path.join(BASE_DIR, "tunnels")
+CONFIG_PATH = os.path.join(BASE_DIR, "config-hysteria-tm.json")   # saved answers, never passwords
 HAP_DIR = os.path.join(BASE_DIR, "haproxy")
 BACKUP_DIR = "/var/backups/tunnel-manager"
 HY_BIN = "/usr/local/bin/hysteria"
@@ -218,13 +219,29 @@ def save_json(path, data):
     write_local(path, json.dumps(data, indent=2))
 
 
+def load_config():
+    """Saved answers: IRAN public IP, KHARJ host, SSH port and user. Never contains a password."""
+    try:
+        data = load_json(CONFIG_PATH)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_config(cfg):
+    os.makedirs(BASE_DIR, exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        f.write(json.dumps(cfg, indent=2) + "\n")
+    os.chmod(CONFIG_PATH, 0o600)
+
+
 def list_tunnels():
     if not os.path.isdir(TUNNEL_DIR):
         return []
     out = []
     for fn in sorted(os.listdir(TUNNEL_DIR)):
         if fn.endswith(".json"):
-            out.append(load_json(os.path.join(TUNNEL_DIR, fn)))
+            out.append(normalize_tunnel(load_json(os.path.join(TUNNEL_DIR, fn))))
     return out
 
 
@@ -232,13 +249,122 @@ def tunnel_path(name):
     return os.path.join(TUNNEL_DIR, name + ".json")
 
 
+# ---------------------------------------------------------------- port forwards
+# A tunnel has one or more forwards. A forward means: users connect to IRAN:public and the
+# traffic arrives at 127.0.0.1:target on KHARJ. Each forward keeps its own loopback ports:
+#   direct_pub   (both)           loopback on IRAN, direct client listens here (haproxy backend)
+#   reverse_pub  (both)           loopback on IRAN, rbridge listens here (haproxy backend)
+#   internal     (reverse, both)  loopback on IRAN, rbridge takes the Hysteria streams here
+#   pool         (reverse, both)  loopback on KHARJ, Hysteria client listens here for rbridge
+def forward_port_keys(ttype):
+    keys = []
+    if ttype == "both":
+        keys += ["direct_pub", "reverse_pub"]
+    if ttype in ("reverse", "both"):
+        keys += ["internal", "pool"]
+    return keys
+
+
+def normalize_tunnel(t):
+    """Gives every tunnel a 'forwards' list. Tunnels made by older versions keep their single
+    forward in the old fields (public_port, target_port and the parts' pub/internal/pool)."""
+    parts = t.get("parts", {})
+    if not t.get("forwards"):
+        f = {"id": "f1", "public": t.get("public_port"), "target": t.get("target_port")}
+        if t.get("type") == "both":
+            f["direct_pub"] = parts.get("direct", {}).get("pub")
+            f["reverse_pub"] = parts.get("reverse", {}).get("pub")
+        if t.get("type") in ("reverse", "both"):
+            f["internal"] = parts.get("reverse", {}).get("internal")
+            f["pool"] = parts.get("reverse", {}).get("pool")
+        t["forwards"] = [f]
+    # these loopback ports now live in the forwards list only
+    for part in parts.values():
+        for key in ("pub", "internal", "pool"):
+            part.pop(key, None)
+    sync_primary(t)
+    return t
+
+
+def sync_primary(t):
+    """public_port and target_port mirror the first forward (used by the benchmark and short summaries)."""
+    first = t["forwards"][0]
+    t["public_port"], t["target_port"] = first["public"], first["target"]
+
+
+def next_forward_id(t):
+    nums = [int(f["id"][1:]) for f in t["forwards"]
+            if str(f.get("id", "")).startswith("f") and str(f["id"])[1:].isdigit()]
+    return f"f{max(nums, default=0) + 1}"
+
+
+def make_forward(ttype, fid, public, target, used):
+    """Builds one forward. The public port must already be reserved in 'used' by the caller."""
+    f = {"id": fid, "public": public, "target": target}
+    if ttype == "both":
+        f["direct_pub"] = pick_random_port(used)
+        used.add(f["direct_pub"])
+        f["reverse_pub"] = pick_random_port(used)
+        used.add(f["reverse_pub"])
+    if ttype in ("reverse", "both"):
+        f["internal"] = pick_random_port(used)
+        used.add(f["internal"])
+        f["pool"] = random_free_remote(used)
+        used.add(f["pool"])
+    return f
+
+
+def ask_forward_public(ttype, used, target):
+    """Default is the KHARJ target port, so users keep the same port number on IRAN."""
+    if ttype == "both":
+        label = "Public port on IRAN (haproxy frontend, users connect here)"
+        first = "Users connect to this TCP port on IRAN. haproxy spreads traffic over both paths."
+    elif ttype == "reverse":
+        label = "Public TCP port on IRAN (users connect here)"
+        first = "rbridge listens on this TCP port on IRAN; users connect here."
+    else:
+        label = "Public TCP port on IRAN (users connect here)"
+        first = "Users connect to this TCP port on IRAN; traffic goes through Hysteria to KHARJ."
+    explain = [first, f"Enter keeps {target}, the same port as the service on KHARJ. Must be free on IRAN (checked now)."]
+    return ask_port(label, explain, used, default=target)
+
+
+def path_detail(t, f):
+    """One line: which loopback ports and Hysteria UDP port carry this forward."""
+    prof = t["profile"]
+
+    def hy_text(part):
+        p = t["parts"][part]
+        return f"{p['hy_port']}-{p['hop_end']}" if prof == "stealth-hop" else str(p["hy_port"])
+
+    if t["type"] == "direct":
+        return f"Hysteria direct: IRAN client -> UDP {hy_text('direct')} (KHARJ server) -> KHARJ 127.0.0.1:{f['target']}"
+    if t["type"] == "reverse":
+        return (f"rbridge: IRAN 127.0.0.1:{f['internal']} <-> Hysteria UDP {hy_text('reverse')} "
+                f"<-> KHARJ 127.0.0.1:{f['pool']}, then KHARJ 127.0.0.1:{f['target']}")
+    return (f"haproxy: direct via 127.0.0.1:{f['direct_pub']} or reverse via 127.0.0.1:{f['reverse_pub']} "
+            f"(rbridge internal {f['internal']}, pool {f['pool']})")
+
+
+def show_forwards(t, indent="  "):
+    """Shows which port on IRAN goes to which port on KHARJ."""
+    print(paint(f"{indent}Port forwards ({len(t['forwards'])}):", C.CYAN, C.BOLD))
+    for i, f in enumerate(t["forwards"], 1):
+        proto = "tcp+udp" if t["type"] == "direct" and t["profile"] != "tcp-lite" else "tcp"
+        print(f"{indent}  {i}) IRAN {f['public']:<6} ({proto:<7}) -> KHARJ 127.0.0.1:{f['target']:<6}"
+              + paint(f"   [{f['id']}]", C.DIM))
+        print(paint(f"{indent}       {path_detail(t, f)}", C.DIM))
+
+
 def used_ports_local():
     """Ports reserved by our own tunnels, so random picks never collide with them."""
     used = set()
     for t in list_tunnels():
-        for key in ("public_port", "target_port"):
-            if isinstance(t.get(key), int):
-                used.add(t[key])
+        for f in t.get("forwards", []):
+            # "target" is a port on KHARJ, so it must not block the same number on IRAN
+            for key in ("public", "direct_pub", "reverse_pub", "internal", "pool"):
+                if isinstance(f.get(key), int):
+                    used.add(f[key])
         for part in t.get("parts", {}).values():
             for v in part.values():
                 if isinstance(v, int):
@@ -273,6 +399,11 @@ class Remote:
                         look_for_keys=False, allow_agent=False)
         except Exception as e:
             raise StopError(f"SSH to {host}:{port} failed: {e}")
+        try:
+            # keepalive: a silently dropped connection is noticed instead of waiting forever
+            cli.get_transport().set_keepalive(15)
+        except Exception:
+            pass
         self.client = cli
         self.host, self.port, self.user = host, port, user
         self.mode = "ssh"
@@ -289,25 +420,31 @@ class Remote:
         self.mode = "none"
 
     # --- primitive
-    def _exec(self, cmd):
-        _, stdout, stderr = self.client.exec_command(cmd, timeout=900)
-        out = stdout.read().decode(errors="replace")
-        err = stderr.read().decode(errors="replace")
-        rc = stdout.channel.recv_exit_status()
+    def _exec(self, cmd, timeout=60):  # probes: 60 s, steps: 300 s (5 minutes)
+        """Runs one command on KHARJ. A command that gets no answer in time stops the step with a
+        clear message instead of waiting forever (this happens when the SSH link has dropped)."""
+        try:
+            _, stdout, stderr = self.client.exec_command(cmd, timeout=timeout)
+            out = stdout.read().decode(errors="replace")
+            err = stderr.read().decode(errors="replace")
+            rc = stdout.channel.recv_exit_status()
+        except Exception as e:
+            raise StopError(f"no answer from KHARJ within {timeout} s ({type(e).__name__}). "
+                            "The SSH link may be lost: reconnect (main menu 7) and run again.")
         return rc, (out + err).strip()
 
     def probe(self, cmd):
         """Quick read-only query. Returns (rc, output). Works only in ssh mode."""
         if self.mode != "ssh":
             return 1, ""
-        return self._exec(cmd)
+        return self._exec(cmd, timeout=60)
 
     # --- main API: run one named step
     def step(self, desc, cmd):
         if self.mode == "ssh":
             if not QUIET:
                 print(paint("  ➜ ", C.BLUE, C.BOLD) + desc)
-            rc, out = self._exec(cmd)
+            rc, out = self._exec(cmd, timeout=300)
             if rc != 0:
                 fail(f"{desc} (exit {rc})")
                 if out and not QUIET:
@@ -413,8 +550,9 @@ def rbridge_yaml(role, t, memory_mb, rules):
     return "\n".join(lines) + "\n"
 
 
-def haproxy_cfg(name, front_port, backends):
-    """backends: list of (label, 127.0.0.1:port, weight). Pure TCP, roundrobin."""
+def haproxy_cfg(name, frontends):
+    """frontends: list of (forward_id, front_port, backends). One frontend per forward.
+    backends: list of (label, 127.0.0.1:port, weight). Pure TCP, roundrobin."""
     lines = [
         "# managed by tunnel-manager; do not edit by hand",
         "global",
@@ -425,15 +563,36 @@ def haproxy_cfg(name, front_port, backends):
         "    timeout client 1h",
         "    timeout server 1h",
         "    timeout tunnel 1h",
-        f"frontend ft_{name}",
-        f"    bind 0.0.0.0:{front_port}",
-        f"    default_backend bk_{name}",
-        f"backend bk_{name}",
-        "    balance roundrobin",
     ]
-    for label, addr, weight in backends:
-        lines.append(f"    server {label} {addr} weight {weight}")
+    for fid, front_port, backends in frontends:
+        lines += [
+            f"frontend ft_{name}_{fid}",
+            f"    bind 0.0.0.0:{front_port}",
+            f"    default_backend bk_{name}_{fid}",
+            f"backend bk_{name}_{fid}",
+            "    balance roundrobin",
+        ]
+        for label, addr, weight in backends:
+            lines.append(f"    server {label} {addr} weight {weight}")
     return "\n".join(lines) + "\n"
+
+
+def haproxy_frontends(t):
+    wd, wr = t.get("weight_direct", 1), t.get("weight_reverse", 1)
+    return [(f["id"], f["public"], [
+        ("direct", f"127.0.0.1:{f['direct_pub']}", wd),
+        ("reverse", f"127.0.0.1:{f['reverse_pub']}", wr),
+    ]) for f in t["forwards"]]
+
+
+def write_haproxy(t):
+    """Writes the haproxy config of a both tunnel and checks it. Raises StopError if haproxy refuses it."""
+    path = f"{HAP_DIR}/{t['name']}.cfg"
+    write_local(path, haproxy_cfg(t["name"], haproxy_frontends(t)), mode=0o644)
+    rc, out = sh(["haproxy", "-c", "-f", path])
+    if rc != 0:
+        raise StopError("haproxy config check failed: " + out[-400:])
+    return path
 
 
 def unit_file(desc, exec_cmd, extra=""):
@@ -793,13 +952,13 @@ def ufw_open_remote(port, proto):
 
 
 # ---------------------------------------------------------------- port wizard
-def ask_port(label, explain, used, proto_list=("tcp",), where="IRAN", default_random=True, exclude=()):
+def ask_port(label, explain, used, proto_list=("tcp",), where="IRAN", default_random=True, exclude=(), default=None):
     """Asks for a port; 'r' or Enter means a random free port. Explains the port first."""
     header(label)
     for line in explain:
         print(paint("    " + line, C.DIM))
     while True:
-        raw = ask(f"Port on {where} (number, or r for random)", default="r")
+        raw = ask(f"Port on {where} (number, or r for random)", default=str(default) if default else "r")
         if raw.lower() == "r":
             for _ in range(20):
                 p = pick_random_port(used, proto_list=proto_list, exclude=exclude)
@@ -1340,20 +1499,12 @@ def read_text(path):
 
 
 def build_haproxy(t):
-    """Both mode only: haproxy on IRAN balances TCP between the direct and reverse paths."""
+    """Both mode only: haproxy on IRAN balances TCP between the direct and reverse paths.
+    One frontend per forward."""
     n = t["name"]
     header("Load balancer (haproxy) on IRAN")
     ensure_local_deps(need_haproxy=True)
-    backends = [
-        ("direct", f"127.0.0.1:{t['parts']['direct']['pub']}", t.get("weight_direct", 1)),
-        ("reverse", f"127.0.0.1:{t['parts']['reverse']['pub']}", t.get("weight_reverse", 1)),
-    ]
-    cfg = haproxy_cfg(n, t["public_port"], backends)
-    path = f"{HAP_DIR}/{n}.cfg"
-    write_local(path, cfg, mode=0o644)
-    rc, out = sh(["haproxy", "-c", "-f", path])
-    if rc != 0:
-        raise StopError("haproxy config check failed: " + out[-400:])
+    path = write_haproxy(t)
     ok("haproxy config is valid")
     local_unit_write(f"tm-{n}-haproxy.service",
                      unit_file(f"tm {n} haproxy load balancer", f"/usr/sbin/haproxy -f {path}"))
@@ -1361,7 +1512,54 @@ def build_haproxy(t):
     local_service("enable", f"tm-{n}-haproxy.service")
     local_service("restart", f"tm-{n}-haproxy.service")
     ok("haproxy started")
-    ufw_open_local(t["public_port"], "tcp")
+    open_forward_ports(t)
+
+
+def open_forward_ports(t):
+    """Opens the public ports of every forward on IRAN (ufw, only when ufw is active)."""
+    for f in t["forwards"]:
+        if t["type"] == "direct":
+            ufw_open_local(f["public"], "tcp")
+            if t["profile"] != "tcp-lite":
+                ufw_open_local(f["public"], "udp")
+        else:
+            ufw_open_local(f["public"], "tcp")
+
+
+def ufw_close_local(port, proto):
+    rc, out = sh(["ufw", "status"])
+    if rc == 0 and "Status: active" in out:
+        sh(["ufw", "delete", "allow", f"{port}/{proto}"])
+
+
+def apply_tunnel(t):
+    """Rewrites the configs of this tunnel from its current forwards, restarts the services and
+    saves the tunnel. Used after a forward is added, changed or removed. Keys and certificates
+    are not touched. The restart drops the current connections of this tunnel for a moment."""
+    normalize_tunnel(t)
+    n = t["name"]
+    header(f"Applying the configs of tunnel '{n}'")
+    if t["type"] in ("direct", "both"):
+        direct_client_write(t)
+        local_service("restart", f"tm-{n}-direct-hy.service")
+        ok("IRAN direct client config rewritten and restarted")
+    if t["type"] in ("reverse", "both"):
+        if reverse_server_write(t):
+            local_service("restart", f"tm-{n}-reverse-hy.service")
+            ok("IRAN Hysteria server config rewritten (stream limit raised) and restarted")
+        reverse_iran_rb_write(t)
+        local_service("restart", f"tm-{n}-reverse-rb.service")
+        ok("IRAN rbridge config rewritten and restarted")
+        reverse_kharej_write(t)
+        REMOTE.step("restart reverse services on KHARJ",
+                    f"systemctl restart tm-{n}-reverse-hy.service tm-{n}-reverse-rb.service")
+    if t["type"] == "both":
+        write_haproxy(t)
+        local_service("restart", f"tm-{n}-haproxy.service")
+        ok("haproxy config rewritten and restarted")
+    open_forward_ports(t)
+    save_json(tunnel_path(n), t)
+    ok("tunnel saved")
 
 
 
@@ -1711,21 +1909,81 @@ def part_client_yaml(t, part, speedtest=False):
         server = server_addr(t["kharej_ip"], p, prof)
         if speedtest:
             return hy_speedtest_client_yaml(p, server, prof)
-        pub_listen = f"0.0.0.0:{t['public_port']}" if t["type"] == "direct" else f"127.0.0.1:{p['pub']}"
-        tcp = [(pub_listen, f"127.0.0.1:{p['target']}"),
-               (f"127.0.0.1:{p['iperf_local']}", f"127.0.0.1:{p['iperf_remote']}")]
-        udp = []
+        tcp, udp = [], []
+        for f in t["forwards"]:
+            listen = f"0.0.0.0:{f['public']}" if t["type"] == "direct" else f"127.0.0.1:{f['direct_pub']}"
+            tcp.append((listen, f"127.0.0.1:{f['target']}"))
+            if prof != "tcp-lite" and t["type"] == "direct":
+                udp.append((f"0.0.0.0:{f['public']}", f"127.0.0.1:{f['target']}"))
+        tcp.append((f"127.0.0.1:{p['iperf_local']}", f"127.0.0.1:{p['iperf_remote']}"))
         if prof != "tcp-lite":
-            if t["type"] == "direct":
-                udp.append((f"0.0.0.0:{t['public_port']}", f"127.0.0.1:{p['target']}"))
             udp.append((f"127.0.0.1:{p['iperf_local']}", f"127.0.0.1:{p['iperf_remote']}"))
         return hy_client_yaml(p, server, tcp, udp, prof)
     server = server_addr(t["iran_ip"], p, prof)
     if speedtest:
         return hy_speedtest_client_yaml(p, server, prof)
-    tcp = [(f"127.0.0.1:{p['pool']}", f"127.0.0.1:{p['internal']}"),
-           (f"127.0.0.1:{p['iperf_pool']}", f"127.0.0.1:{p['iperf_internal']}")]
+    tcp = [(f"127.0.0.1:{f['pool']}", f"127.0.0.1:{f['internal']}") for f in t["forwards"]]
+    tcp.append((f"127.0.0.1:{p['iperf_pool']}", f"127.0.0.1:{p['iperf_internal']}"))
     return hy_client_yaml(p, server, tcp, [], prof)
+
+
+def direct_client_write(t):
+    write_local(f"{BASE_DIR}/{t['name']}/direct-client.yaml", part_client_yaml(t, "direct"))
+
+
+# rbridge keeps up to 512 pre-opened streams per rule (one rule per forward, plus the iperf rule).
+# The Hysteria server allows 1024 incoming streams by default, so a reverse tunnel with more
+# than one forward would hit "too many open streams" and reconnect in a loop. The reverse
+# server therefore gets a higher limit.
+REVERSE_MAX_STREAMS = 8192
+
+
+def reverse_server_write(t):
+    """IRAN Hysteria server config of a reverse tunnel. Returns True when the file changed."""
+    p = t["parts"]["reverse"]
+    n = t["name"]
+    cert_l = key_l = ""
+    if t["profile"] != "max-stealth":
+        cert_l = f"{BASE_DIR}/{n}/reverse-cert.pem"
+        key_l = f"{BASE_DIR}/{n}/reverse-key.pem"
+    path = f"{BASE_DIR}/{n}/reverse-server.yaml"
+    text = hy_server_yaml(p, t["masq"], t["profile"], cert_l, key_l, max_streams=REVERSE_MAX_STREAMS)
+    try:
+        if read_text(path) == text:
+            return False
+    except OSError:
+        pass
+    write_local(path, text)
+    return True
+
+
+def reverse_iran_rb_write(t):
+    """IRAN side of a reverse tunnel: one rbridge rule per forward, plus the iperf rule."""
+    p = t["parts"]["reverse"]
+    rules = []
+    for f in t["forwards"]:
+        listen = f"127.0.0.1:{f['reverse_pub']}" if t["type"] == "both" else f"0.0.0.0:{f['public']}"
+        rules.append({"name": f["id"], "listen": listen, "internal": f"127.0.0.1:{f['internal']}"})
+    rules.append({"name": "iperf", "listen": f"127.0.0.1:{p['iperf_pub']}",
+                  "internal": f"127.0.0.1:{p['iperf_internal']}"})
+    text = rbridge_yaml("iran", {**p, "iran_ip": t["iran_ip"]}, t["ram_mb"], rules)
+    write_local(f"{BASE_DIR}/{t['name']}/reverse-rbridge.yaml", text)
+
+
+def reverse_kharej_write(t):
+    """KHARJ side of a reverse tunnel: Hysteria client config and rbridge config, over SSH."""
+    n = t["name"]
+    p = t["parts"]["reverse"]
+    rules = []
+    for f in t["forwards"]:
+        rules.append({"name": f["id"], "pool_listen": f"127.0.0.1:{f['pool']}",
+                      "internal": f"127.0.0.1:{f['internal']}", "target": f"127.0.0.1:{f['target']}"})
+    rules.append({"name": "iperf", "pool_listen": f"127.0.0.1:{p['iperf_pool']}",
+                  "internal": f"127.0.0.1:{p['iperf_internal']}", "target": f"127.0.0.1:{p['iperf_target']}"})
+    kh_rb = rbridge_yaml("kharej", {**p, "iran_ip": t["iran_ip"]}, t["ram_mb"], rules)
+    REMOTE.write_file("write reverse client config (hysteria) on KHARJ",
+                      f"{REMOTE_BASE}/{n}/reverse-client.yaml", part_client_yaml(t, "reverse"))
+    REMOTE.write_file("write reverse rbridge config on KHARJ", f"{REMOTE_BASE}/{n}/reverse-rbridge.yaml", kh_rb)
 
 
 # ---------------------------------------------------------------- builders
@@ -1759,7 +2017,7 @@ def build_direct(t):
         ufw_open_remote(80, "tcp")
 
     header("Direct tunnel: IRAN client")
-    write_local(f"{BASE_DIR}/{n}/direct-client.yaml", part_client_yaml(t, "direct"))
+    direct_client_write(t)
     local_unit_write(f"tm-{n}-direct-hy.service",
                      unit_file(f"tm {n} direct hysteria client",
                                f"{HY_BIN} client -c {BASE_DIR}/{n}/direct-client.yaml"))
@@ -1768,9 +2026,7 @@ def build_direct(t):
     local_service("restart", f"tm-{n}-direct-hy.service")
     ok("IRAN direct client started")
     if t["type"] == "direct":
-        ufw_open_local(t["public_port"], "tcp")
-        if prof != "tcp-lite":
-            ufw_open_local(t["public_port"], "udp")
+        open_forward_ports(t)
 
 
 def build_reverse(t):
@@ -1796,14 +2052,8 @@ def build_reverse(t):
         key_l = f"{BASE_DIR}/{n}/reverse-key.pem"
         write_local(cert_l, read_text(p["cert_path"]), mode=0o644)
         write_local(key_l, read_text(p["key_path"]), mode=0o600)
-    public_listen = f"127.0.0.1:{p['pub']}" if t["type"] == "both" else f"0.0.0.0:{t['public_port']}"
-    iran_rb = rbridge_yaml("iran", {**p, "iran_ip": t["iran_ip"]}, t["ram_mb"], [
-        {"name": "main", "listen": public_listen, "internal": f"127.0.0.1:{p['internal']}"},
-        {"name": "iperf", "listen": f"127.0.0.1:{p['iperf_pub']}", "internal": f"127.0.0.1:{p['iperf_internal']}"},
-    ])
-    srv = hy_server_yaml(p, t["masq"], prof, cert_l, key_l)
-    write_local(f"{BASE_DIR}/{n}/reverse-server.yaml", srv)
-    write_local(f"{BASE_DIR}/{n}/reverse-rbridge.yaml", iran_rb)
+    reverse_server_write(t)
+    reverse_iran_rb_write(t)
     local_unit_write(f"tm-{n}-reverse-hy.service",
                      unit_file(f"tm {n} reverse hysteria server",
                                f"{HY_BIN} server -c {BASE_DIR}/{n}/reverse-server.yaml"))
@@ -1823,19 +2073,11 @@ def build_reverse(t):
     if prof == "max-stealth" and not p.get("cert_file"):
         ufw_open_local(80, "tcp")
     if t["type"] == "reverse":
-        ufw_open_local(t["public_port"], "tcp")
+        open_forward_ports(t)
 
     # KHARJ side
     header("Reverse tunnel: KHARJ client")
-    kh_rb = rbridge_yaml("kharej", {**p, "iran_ip": t["iran_ip"]}, t["ram_mb"], [
-        {"name": "main", "pool_listen": f"127.0.0.1:{p['pool']}",
-         "internal": f"127.0.0.1:{p['internal']}", "target": f"127.0.0.1:{t['target_port']}"},
-        {"name": "iperf", "pool_listen": f"127.0.0.1:{p['iperf_pool']}",
-         "internal": f"127.0.0.1:{p['iperf_internal']}", "target": f"127.0.0.1:{p['iperf_target']}"},
-    ])
-    REMOTE.write_file("write reverse client config (hysteria) on KHARJ",
-                      f"{REMOTE_BASE}/{n}/reverse-client.yaml", part_client_yaml(t, "reverse"))
-    REMOTE.write_file("write reverse rbridge config on KHARJ", f"{REMOTE_BASE}/{n}/reverse-rbridge.yaml", kh_rb)
+    reverse_kharej_write(t)
     remote_unit_step(f"tm-{n}-reverse-hy.service",
                      unit_file(f"tm {n} reverse hysteria client",
                                f"{HY_BIN} client -c {REMOTE_BASE}/{n}/reverse-client.yaml"),
@@ -1856,9 +2098,7 @@ def show_details(t):
         where = "KHARJ" if side == "direct" else "IRAN"
         print(f"    domain    : {dom}  (A record must point to {where}; ECH decoy: {t.get('ech_public', '-')})")
     print(f"    masquerade: {t['masq'].get('url', 'static text')}  sni={t['sni']}")
-    if "public_port" in t:
-        print(f"    public    : {t['public_port']}  ({PORT_HELP['public_port']})")
-    print(f"    target    : {t['target_port']}  ({PORT_HELP['target_port']})")
+    show_forwards(t, indent="    ")
     for part, p in t["parts"].items():
         print(paint(f"    [{part}]", C.YELLOW))
         if p.get("extras"):
@@ -1959,7 +2199,7 @@ def create_tunnel():
             return
 
     header("Server addresses")
-    iran_ip = ask("Public IP of IRAN (KHARJ must reach it)", default=detect_public_ip())
+    iran_ip = get_iran_ip()
     kharej_ip = REMOTE.host if REMOTE.mode == "ssh" else ask("Public IP of KHARJ")
     ram_mb = ask_ram()
     masq = ask_masquerade()
@@ -1989,17 +2229,12 @@ def create_tunnel():
             "The tunnel forwards user traffic to this port on KHARJ, which must already be listening.",
             "Example: 443 if xray or sing-box listens on 127.0.0.1:443 on KHARJ.",
         ])
-        t["target_port"] = target
         for part in parts:
             t["parts"][part] = {}
-
-        if ttype == "both":
-            t["public_port"] = ask_port(
-                "Public port on IRAN (haproxy frontend, users connect here)",
-                ["Users connect to this TCP port on IRAN. haproxy spreads traffic over both paths.",
-                 "It must not be used by another service on IRAN (checked now)."],
-                used)
-            used.add(t["public_port"])
+        public = ask_forward_public(ttype, used, target)
+        used.add(public)
+        t["forwards"] = [make_forward(ttype, "f1", public, target, used)]
+        sync_primary(t)
 
         for part in parts:
             p = t["parts"][part]
@@ -2042,32 +2277,11 @@ def create_tunnel():
             used.add(p["hy_port"])
 
             if part == "direct":
-                if ttype == "direct":
-                    t["public_port"] = ask_port(
-                        "Public TCP port on IRAN (users connect here)",
-                        ["Users connect to this TCP port on IRAN; traffic goes through Hysteria to KHARJ.",
-                         "Must be free on IRAN (checked now)."],
-                        used)
-                    used.add(t["public_port"])
                 p["iperf_local"] = pick_random_port(used)
                 used.add(p["iperf_local"])
                 p["iperf_remote"] = random_free_remote(used)
                 used.add(p["iperf_remote"])
-                if ttype == "both":
-                    p["pub"] = pick_random_port(used)
-                    used.add(p["pub"])
             else:
-                if ttype == "reverse":
-                    t["public_port"] = ask_port(
-                        "Public TCP port on IRAN (users connect here)",
-                        ["rbridge listens on this TCP port on IRAN; users connect here.",
-                         "Must be free on IRAN (checked now)."],
-                        used)
-                    used.add(t["public_port"])
-                p["internal"] = pick_random_port(used)
-                used.add(p["internal"])
-                p["pool"] = random_free_remote(used)
-                used.add(p["pool"])
                 p["iperf_pub"] = pick_random_port(used)
                 used.add(p["iperf_pub"])
                 p["iperf_internal"] = pick_random_port(used)
@@ -2076,9 +2290,6 @@ def create_tunnel():
                 used.add(p["iperf_pool"])
                 p["iperf_target"] = random_free_remote(used)
                 used.add(p["iperf_target"])
-                if ttype == "both":
-                    p["pub"] = pick_random_port(used)
-                    used.add(p["pub"])
 
         ensure_free_ports(t, used)
         header("Building the tunnel")
@@ -2163,7 +2374,7 @@ def apply_extra_secrets(p, extras, used, settings):
 
 
 # ---------------------------------------------------------------- Hysteria YAML (profiles + extras)
-def hy_server_yaml(p, masq, prof, cert, key):
+def hy_server_yaml(p, masq, prof, cert, key, max_streams=None):
     ex = p.get("extras", [])
     lines = []
     if prof == "stealth-hop":
@@ -2191,7 +2402,10 @@ def hy_server_yaml(p, masq, prof, cert, key):
                   "    minPacketSize: 512", "    maxPacketSize: 1200"]
     elif prof != "max-stealth":
         lines += ["obfs:", "  type: salamander", "  salamander:", "    password: " + yaml_str(p["obfs_password"])]
-    lines += ["quic:", "  disableStatelessReset: true", "speedTest: true"]
+    lines += ["quic:", "  disableStatelessReset: true"]
+    if max_streams:
+        lines.append(f"  maxIncomingStreams: {max_streams}")
+    lines.append("speedTest: true")
     if "congestion" in ex:
         lines += ["congestion:", "  type: bbr", f"  bbrProfile: {p['bbr_profile']}"]
     if "stats" in ex:
@@ -2430,7 +2644,7 @@ def make_bench_tunnel(idx, ttype, profile, target, iran_ip, kharej_ip, domains, 
             if ttype == "both":
                 p["pub"] = pick_random_port(used)
                 used.add(p["pub"])
-    return t
+    return normalize_tunnel(t)
 
 
 # Listening ports on the local (loopback) side of a tunnel. Ports that are not listed here
@@ -2458,9 +2672,12 @@ def ensure_free_ports(t, used):
     """Before any service starts: each port a service of this tunnel listens on must be free on
     the server where it listens. A busy port is replaced (max-stealth UDP keeps 443, 8443, then
     random). The configs are written from the new values. Returns how many ports changed."""
+    info("checking that the tunnel ports are free on IRAN and KHARJ (KHARJ is asked over SSH)...")
     checks = []
-    if t.get("public_port"):
-        checks.append((None, t, "public_port", "tcp"))
+    for f in t["forwards"]:
+        checks.append((None, f, "public", "tcp"))
+        for key in forward_port_keys(t["type"]):
+            checks.append((None, f, key, "tcp"))
     for part, p in t["parts"].items():
         if t["profile"] != "stealth-hop":
             checks.append((part, p, "hy_port", "udp"))
@@ -2481,6 +2698,7 @@ def ensure_free_ports(t, used):
         warn(f"{t['name']}: {key} port {port}/{proto} is already in use; using {new}")
         holder[key] = new
         changed += 1
+    sync_primary(t)
     if changed:
         ok(f"{changed} port(s) changed to free ports before starting the services")
     return changed
@@ -2625,7 +2843,7 @@ def run_benchmark():
         raise StopError("the two domains must be different (one for KHARJ, one for IRAN)")
     email = ask_email(domains["direct"])
     ech_public = ask_ech_public()
-    iran_ip = ask("Public IP of IRAN (KHARJ must reach it)", default=detect_public_ip())
+    iran_ip = get_iran_ip()
     kharej_ip = REMOTE.host
 
     reuse = {}
@@ -2905,7 +3123,8 @@ def speedtest_menu():
 # ---------------------------------------------------------------- manage
 def pick_tunnel(items):
     for i, t in enumerate(items, 1):
-        print(f"    {i}) {t['name']:<20} {t['type']:<8} public={t.get('public_port', '-')}")
+        ports = ", ".join(f"{f['public']}->{f['target']}" for f in t["forwards"])
+        print(f"    {i}) {t['name']:<20} {t['type']:<8} forwards: {ports}")
     raw = ask("Select number (Enter to cancel)", default="")
     if not raw.isdigit() or not (1 <= int(raw) <= len(items)):
         return None
@@ -2931,17 +3150,139 @@ def change_weights(t):
         fail("weights must be numbers")
         return
     t["weight_direct"], t["weight_reverse"] = int(wd), int(wr)
-    write_local(f"{HAP_DIR}/{t['name']}.cfg", haproxy_cfg(t["name"], t["public_port"], [
-        ("direct", f"127.0.0.1:{t['parts']['direct']['pub']}", t["weight_direct"]),
-        ("reverse", f"127.0.0.1:{t['parts']['reverse']['pub']}", t["weight_reverse"]),
-    ]), mode=0o644)
-    rc, out = sh(["haproxy", "-c", "-f", f"{HAP_DIR}/{t['name']}.cfg"])
-    if rc != 0:
-        fail("haproxy config check failed: " + out[-300:])
+    try:
+        write_haproxy(t)
+    except StopError as e:
+        fail(str(e))
         return
     sh(["systemctl", "restart", f"tm-{t['name']}-haproxy.service"])
     save_json(tunnel_path(t["name"]), t)
     ok("weights updated")
+
+
+def pick_forward(t):
+    for i, f in enumerate(t["forwards"], 1):
+        print(f"    {i}) IRAN {f['public']:<6} -> KHARJ 127.0.0.1:{f['target']}   [{f['id']}]")
+    raw = ask("Select number (Enter to cancel)", default="")
+    if not raw.isdigit() or not (1 <= int(raw) <= len(t["forwards"])):
+        return None
+    return t["forwards"][int(raw) - 1]
+
+
+def ask_number(prompt, current):
+    while True:
+        raw = ask(prompt, default=str(current))
+        if raw.isdigit() and 1 <= int(raw) <= 65535:
+            return int(raw)
+        fail("not a valid port")
+
+
+def add_forward(t):
+    """Adds a new forward to an existing tunnel: a new public port on IRAN and a service port on KHARJ."""
+    used = used_ports_local()
+    fid = next_forward_id(t)
+    target = ask_target_port(t["name"], [
+        "The real service on KHARJ that this new forward sends traffic to (127.0.0.1 on KHARJ).",
+    ])
+    public = ask_forward_public(t["type"], used, target)
+    used.add(public)
+    f = make_forward(t["type"], fid, public, target, used)
+    t["forwards"].append(f)
+    sync_primary(t)
+    try:
+        apply_tunnel(t)
+    except StopError:
+        t["forwards"].remove(f)
+        sync_primary(t)
+        warn("the new forward was not saved. Fix the error, then run 'Re-apply' from this menu.")
+        raise
+    ok(f"forward added: IRAN {public} -> KHARJ 127.0.0.1:{target}")
+
+
+def rewrite_forward(t):
+    """Changes the IRAN public port and/or the KHARJ target port of one forward."""
+    f = pick_forward(t)
+    if not f:
+        return
+    old = dict(f)
+    used = used_ports_local()
+    used.discard(f["public"])
+    new_public = ask_number(f"New public port on IRAN (Enter keeps {f['public']})", f["public"])
+    if new_public != f["public"]:
+        if new_public in used or local_port_used(new_public):
+            fail(f"port {new_public} is already in use")
+            return
+    new_target = ask_number(f"New target port on KHARJ (Enter keeps {f['target']})", f["target"])
+    if new_public == f["public"] and new_target == f["target"]:
+        warn("nothing changed")
+        return
+    f["public"], f["target"] = new_public, new_target
+    sync_primary(t)
+    try:
+        apply_tunnel(t)
+    except StopError:
+        f.update(old)
+        sync_primary(t)
+        warn("the change was not saved. Fix the error, then try again or run 'Re-apply'.")
+        raise
+    if new_public != old["public"]:
+        for proto in (["tcp", "udp"] if t["type"] == "direct" and t["profile"] != "tcp-lite" else ["tcp"]):
+            ufw_close_local(old["public"], proto)
+    ok(f"forward changed: IRAN {new_public} -> KHARJ 127.0.0.1:{new_target}")
+
+
+def delete_forward(t):
+    if len(t["forwards"]) <= 1:
+        warn("this is the only forward. To remove it, delete the whole tunnel from Manage tunnels.")
+        return
+    f = pick_forward(t)
+    if not f:
+        return
+    if not ask_yes(f"Delete forward IRAN {f['public']} -> KHARJ 127.0.0.1:{f['target']}?", default=False):
+        return
+    index = t["forwards"].index(f)
+    t["forwards"].remove(f)
+    sync_primary(t)
+    try:
+        apply_tunnel(t)
+    except StopError:
+        t["forwards"].insert(index, f)
+        sync_primary(t)
+        warn("the forward was not deleted. Fix the error, then try again.")
+        raise
+    for proto in (["tcp", "udp"] if t["type"] == "direct" and t["profile"] != "tcp-lite" else ["tcp"]):
+        ufw_close_local(f["public"], proto)
+    ok("forward deleted")
+
+
+def forward_menu(t):
+    while True:
+        banner(f"Port forwards: {t['name']} ({t['type']})")
+        show_forwards(t, indent="  ")
+        print()
+        print("    1) Add a new port forward")
+        print("    2) Rewrite a port forward (change the IRAN port or the KHARJ target)")
+        print("    3) Delete a port forward")
+        print("    4) Re-apply all configs now (rewrites both servers and restarts services)")
+        print("    0) Back")
+        c = ask("Choose", default="0")
+        if c == "0":
+            return
+        try:
+            if c == "1":
+                add_forward(t)
+            elif c == "2":
+                rewrite_forward(t)
+            elif c == "3":
+                delete_forward(t)
+            elif c == "4":
+                apply_tunnel(t)
+                ok("configs re-applied")
+            else:
+                warn("unknown choice")
+        except StopError as e:
+            fail(f"STOPPED: {e}")
+        pause()
 
 
 def manage_menu():
@@ -2965,7 +3306,8 @@ def manage_menu():
             print("    3) Stop")
             print("    4) Restart")
             print("    5) Change haproxy weights (both only)")
-            print("    6) Delete this tunnel")
+            print("    6) Port forwards: show, add, rewrite, delete")
+            print("    7) Delete this tunnel")
             print("    0) Back")
             c = ask("Choose", default="0")
             if c == "0":
@@ -2980,6 +3322,9 @@ def manage_menu():
                 elif c == "5":
                     change_weights(t)
                 elif c == "6":
+                    forward_menu(t)
+                    continue
+                elif c == "7":
                     if ask(f"Type the tunnel name '{t['name']}' to confirm deletion") == t["name"]:
                         remove_tunnel(t)
                         ok("deleted")
@@ -2990,17 +3335,67 @@ def manage_menu():
             pause()
 
 
+# ---------------------------------------------------------------- saved settings
+def ask_iran_ip(default):
+    while True:
+        ip = ask("Public IP of IRAN (KHARJ must reach it)", default=default)
+        if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip or ""):
+            return ip
+        fail("not an IPv4 address")
+
+
+def get_iran_ip():
+    """The IRAN public IP is asked once and saved in config-hysteria-tm.json."""
+    cfg = load_config()
+    if cfg.get("iran_ip"):
+        return cfg["iran_ip"]
+    header("IRAN public IP (asked once, then saved)")
+    ip = ask_iran_ip(detect_public_ip())
+    cfg["iran_ip"] = ip
+    save_config(cfg)
+    ok(f"saved IRAN public IP {ip} in {CONFIG_PATH}")
+    return ip
+
+
+def settings_menu():
+    while True:
+        banner("Saved settings")
+        cfg = load_config()
+        print(f"    config file    : {CONFIG_PATH}")
+        print(f"    IRAN public IP : {cfg.get('iran_ip', '(not saved yet)')}")
+        print(f"    KHARJ host     : {cfg.get('kharej_host', '(not saved yet)')}")
+        print(f"    SSH port/user  : {cfg.get('ssh_port', 22)} / {cfg.get('ssh_user', 'root')}")
+        print(paint("    The SSH password is never saved.", C.DIM))
+        print()
+        print("    1) Change the IRAN public IP")
+        print("    0) Back")
+        c = ask("Choose", default="0")
+        if c == "0":
+            return
+        if c == "1":
+            cfg["iran_ip"] = ask_iran_ip(cfg.get("iran_ip") or detect_public_ip())
+            save_config(cfg)
+            ok("IRAN public IP saved")
+            pause()
+
+
 # ---------------------------------------------------------------- connection screen
 def connect_menu():
     banner("Connect to KHARJ")
     print("    The SSH password is asked each run and is never saved.")
+    print("    Host, port and user are saved and offered as defaults next time.")
     print("    If SSH fails, you can continue in MANUAL mode: the menu shows the")
     print("    commands for KHARJ one by one and you run them in your KHARJ terminal.")
     print()
+    cfg = load_config()
     while True:
-        host = ask("KHARJ host (IP)")
-        port = ask("SSH port", default="22")
-        user = ask("SSH user", default="root")
+        host = ask("KHARJ host (IP)", default=cfg.get("kharej_host"))
+        port = ask("SSH port", default=str(cfg.get("ssh_port", 22)))
+        if not port.isdigit():
+            port = "22"
+        user = ask("SSH user", default=cfg.get("ssh_user", "root"))
+        cfg.update({"kharej_host": host, "ssh_port": int(port), "ssh_user": user})
+        save_config(cfg)
         pw = getpass.getpass(paint("  ? ", C.CYAN, C.BOLD) + "SSH password (hidden): ")
         if paramiko is None:
             fail("paramiko is missing")
@@ -3059,6 +3454,7 @@ def main_menu():
         print("    5) Install / check dependencies on IRAN")
         print("    6) Auto benchmark (tests all tunnel types)")
         print("    7) Reconnect to KHARJ")
+        print("    8) Saved settings (IRAN IP)")
         print("    0) Exit")
         c = ask("Choose", default="0")
         try:
@@ -3079,6 +3475,8 @@ def main_menu():
             elif c == "7":
                 REMOTE.close()
                 connect_menu()
+            elif c == "8":
+                settings_menu()
             elif c == "0":
                 REMOTE.close()
                 print(paint("\n  bye\n", C.CYAN))
@@ -3110,6 +3508,7 @@ def main():
         print(paint("Run this script as root on the IRAN server.", C.RED, C.BOLD))
         sys.exit(1)
     confirm_iran_server()
+    get_iran_ip()   # asked once; the answer is saved in config-hysteria-tm.json
     if paramiko is None:
         banner("Missing dependency")
         info("installing python3-paramiko with apt...")
