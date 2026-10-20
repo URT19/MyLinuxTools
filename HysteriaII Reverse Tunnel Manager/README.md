@@ -32,6 +32,14 @@ cd hysteria-tm
 sudo python3 hysteria-tm
 ```
 
+بروزرسانی اسکریپت اصلی 
+
+```
+cd /root/hysteria-tm
+curl -fL -o hysteria-tm "https://raw.githubusercontent.com/URT19/MyLinuxTools/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm"
+```
+
+
 پکیج شامل Hysteria v2.13.0، `install_server.sh` و rbridge است، پس روی سرورهایی که به GitHub یا `get.hy2.sh` دسترسی ندارند هم نصب می‌شود.
 
 ## مثال‌های کاربردی
