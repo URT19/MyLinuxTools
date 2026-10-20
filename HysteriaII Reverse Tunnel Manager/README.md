@@ -36,9 +36,15 @@
 
 ```bash
 curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.2.tar.gz"
+
 tar -xzf hysteria-tm.tar.gz
+
 cd hysteria-tm
+
+chmod +x hysteria-tm
+
 sudo python3 ./hysteria-tm
+
 ```
 
 **مهم:** حتماً اول `cd hysteria-tm` را بزن. اگر از پوشهٔ `/root` اجرا کنی، پایتون پوشه را به‌جای فایل می‌گیرد و خطای `can't find '__main__' module` می‌دهد. بهتر است قبل از اجرا با `tmux` یا `screen` کار کنی تا اگر SSH قطع شد، نصب یا بنچمارک ادامه پیدا کند.
