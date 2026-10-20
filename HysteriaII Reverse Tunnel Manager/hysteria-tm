@@ -32,7 +32,7 @@ except ImportError:
     paramiko = None
 
 # ---------------------------------------------------------------- constants
-VERSION = "0.8.12"
+VERSION = "0.8.13"
 BASE_DIR = "/etc/tunnel-manager"
 TUNNEL_DIR = os.path.join(BASE_DIR, "tunnels")
 HAP_DIR = os.path.join(BASE_DIR, "haproxy")
@@ -2080,6 +2080,7 @@ def create_tunnel():
                     p["pub"] = pick_random_port(used)
                     used.add(p["pub"])
 
+        ensure_free_ports(t, used)
         header("Building the tunnel")
         if ttype in ("direct", "both"):
             build_direct(t)
@@ -2432,6 +2433,64 @@ def make_bench_tunnel(idx, ttype, profile, target, iran_ip, kharej_ip, domains, 
     return t
 
 
+# Listening ports on the local (loopback) side of a tunnel. Ports that are not listed here
+# (the user's target port, the benchmark web server) are never changed.
+PRIVATE_TCP_FIELDS = ("pub", "internal", "pool", "iperf_local", "iperf_remote",
+                      "iperf_pub", "iperf_internal", "iperf_pool")
+
+
+def port_in_use_anywhere(port, proto="tcp"):
+    """True when the port is in use on IRAN, or on KHARJ when SSH is connected."""
+    if local_port_used(port, proto):
+        return True
+    return REMOTE.mode == "ssh" and remote_port_used(port, proto)
+
+
+def pick_free_port_anywhere(used, proto):
+    for _ in range(200):
+        p = pick_random_port(used, proto_list=(proto,))
+        if not port_in_use_anywhere(p, proto):
+            return p
+    raise StopError(f"could not find a free {proto} port on both servers")
+
+
+def ensure_free_ports(t, used):
+    """Before any service starts: each port a service of this tunnel listens on must be free on
+    the server where it listens. A busy port is replaced (max-stealth UDP keeps 443, 8443, then
+    random). The configs are written from the new values. Returns how many ports changed."""
+    checks = []
+    if t.get("public_port"):
+        checks.append((None, t, "public_port", "tcp"))
+    for part, p in t["parts"].items():
+        if t["profile"] != "stealth-hop":
+            checks.append((part, p, "hy_port", "udp"))
+        for key in PRIVATE_TCP_FIELDS:
+            if key in p:
+                checks.append((part, p, key, "tcp"))
+    changed = 0
+    for part, holder, key, proto in checks:
+        port = holder[key]
+        if not port_in_use_anywhere(port, proto):
+            continue
+        if key == "hy_port" and t["profile"] == "max-stealth":
+            side = "KHARJ" if part == "direct" else "IRAN"
+            new = max_stealth_port(side, used) or bench_udp_port(side, used)
+        else:
+            new = pick_free_port_anywhere(used, proto)
+        used.add(new)
+        warn(f"{t['name']}: {key} port {port}/{proto} is already in use; using {new}")
+        holder[key] = new
+        changed += 1
+    if changed:
+        ok(f"{changed} port(s) changed to free ports before starting the services")
+    return changed
+
+
+def port_conflict(t):
+    """True when a unit of this tunnel failed because a port was already taken."""
+    return "address already in use" in unit_log_tail(t, lines=40)
+
+
 def build_by_type(t):
     if t["type"] in ("direct", "both"):
         build_direct(t)
@@ -2463,6 +2522,7 @@ def diagnose(text):
         ("exit status 17", "mimic lock file exists in /run/mimic (stale lock or another mimic instance)"),
         ("no recent network activity", "Hysteria client could not reach the server (no UDP answer)"),
         ("no tunnel stream available", "rbridge got no stream from the other side"),
+        ("address already in use", "a port of this tunnel was already in use on a server"),
     ]
     reasons = [msg for key, msg in rules if key in text]
     return "; ".join(reasons)
@@ -2600,46 +2660,57 @@ def run_benchmark():
                 print(paint(f"  [{idx}/{len(BENCH_PLAN)}] {ttype.upper()} · {profile}", C.MAGENTA, C.BOLD))
                 print(paint(f"        {TYPE_DESC[ttype]}", C.DIM))
                 print(paint(f"        {PROFILE_DESC[profile]}", C.DIM))
-                t = None
-                try:
-                    stage("building tunnel")
-                    t = make_bench_tunnel(idx, ttype, profile, target, iran_ip, kharej_ip,
-                                          domains, email, ech_public, used, reuse)
-                    build_by_type(t)
-                    time.sleep(5)
-                    stage("checking services")
-                    dead = dead_units(t)
-                    if dead:
-                        raise StopError("service stopped after start: " + "; ".join(dead))
-                    remember_issued_cert(t, reuse)
-                    stage(f"sending {REQUESTS} requests")
-                    res = measure_tunnel(t)
-                    sc, ct, tt = score_results(res)
-                    log, reason, diag = "", "", ""
-                    if sc == 0:
-                        log = unit_log_tail(t)
-                        diag = collect_diag()
-                        reason = diagnose(log) or "no successful request"
-                        show_failure(reason, log)
-                    else:
-                        ok(f"score {sc} · total {ct} ms · first byte {tt} ms", always=True)
-                    results.append({"label": label, "score": sc, "total_ms": ct, "first_byte_ms": tt,
-                                    "ok": sum(1 for r in res if r[2]), "error": "", "reason": reason, "log": log, "diag": diag})
-                except Exception as e:
-                    log = unit_log_tail(t) if t is not None else ""
-                    diag = collect_diag() if t is not None else ""
-                    hint = diagnose(f"{e}\n{log}")
-                    reason = f"{e} ({hint})" if hint else str(e)
-                    show_failure(reason, log)
-                    results.append({"label": label, "score": 0, "total_ms": None,
-                                    "first_byte_ms": None, "ok": 0, "error": str(e), "reason": reason, "log": log, "diag": diag})
-                finally:
-                    if t is not None:
-                        stage("removing tunnel")
-                        try:
-                            remove_tunnel(t)
-                        except StopError as e:
-                            warn(f"cleanup of {label} reported: {e}")
+                for attempt in (1, 2):
+                    t = None
+                    conflict = False
+                    try:
+                        stage("building tunnel")
+                        t = make_bench_tunnel(idx, ttype, profile, target, iran_ip, kharej_ip,
+                                              domains, email, ech_public, used, reuse)
+                        ensure_free_ports(t, used)
+                        build_by_type(t)
+                        time.sleep(5)
+                        stage("checking services")
+                        dead = dead_units(t)
+                        if dead:
+                            if attempt == 1 and port_conflict(t):
+                                conflict = True
+                                raise StopError("a port was already in use on a server")
+                            raise StopError("service stopped after start: " + "; ".join(dead))
+                        remember_issued_cert(t, reuse)
+                        stage(f"sending {REQUESTS} requests")
+                        res = measure_tunnel(t)
+                        sc, ct, tt = score_results(res)
+                        log, reason, diag = "", "", ""
+                        if sc == 0:
+                            log = unit_log_tail(t)
+                            diag = collect_diag()
+                            reason = diagnose(log) or "no successful request"
+                            show_failure(reason, log)
+                        else:
+                            ok(f"score {sc} · total {ct} ms · first byte {tt} ms", always=True)
+                        results.append({"label": label, "score": sc, "total_ms": ct, "first_byte_ms": tt,
+                                        "ok": sum(1 for r in res if r[2]), "error": "", "reason": reason, "log": log, "diag": diag})
+                    except Exception as e:
+                        if conflict:
+                            warn(f"{label}: a port was already in use; the test is run once more with other ports")
+                        else:
+                            log = unit_log_tail(t) if t is not None else ""
+                            diag = collect_diag() if t is not None else ""
+                            hint = diagnose(f"{e}\n{log}")
+                            reason = f"{e} ({hint})" if hint else str(e)
+                            show_failure(reason, log)
+                            results.append({"label": label, "score": 0, "total_ms": None,
+                                            "first_byte_ms": None, "ok": 0, "error": str(e), "reason": reason, "log": log, "diag": diag})
+                    finally:
+                        if t is not None:
+                            stage("removing tunnel")
+                            try:
+                                remove_tunnel(t)
+                            except StopError as e:
+                                warn(f"cleanup of {label} reported: {e}")
+                    if not conflict:
+                        break
         finally:
             bench_target_stop()
     finally:
