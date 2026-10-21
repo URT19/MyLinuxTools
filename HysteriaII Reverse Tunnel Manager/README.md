@@ -39,7 +39,7 @@
 روی سرور ایران، با root:
 
 ```bash
-curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.2.tar.gz"
+curl -fL -o hysteria-tm.tar.gz "https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/HysteriaII%20Reverse%20Tunnel%20Manager/hysteria-tm-0.9.6.tar.gz"
 
 tar -xzf hysteria-tm.tar.gz
 
