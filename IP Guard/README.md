@@ -6,7 +6,8 @@
 
 
 ```
-sudo cp ip_guard_v2.1.py /opt/ip-guard/ip_guard.py
+wget https://github.com/URT19/MyLinuxTools/raw/refs/heads/main/IP%20Guard/ip_guard_v2.2.py
+sudo cp ip_guard_v2.2.py /opt/ip-guard/ip_guard.py
 ```
 
 ```
